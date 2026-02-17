@@ -1,0 +1,11 @@
+{
+  "domain": "heimdall_battery_sentinel",
+  "name": "Heimdall Battery Sentinel",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "",
+  "iot_class": "local_push",
+  "version": "1.0.0",
+  "requirements": [],
+  "dependencies": ["frontend"]
+}

@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heimdall Battery Sentinel Setup",
+        "description": "Configure the low battery level threshold",
+        "data": {
+          "threshold": "Low Battery threshold (%)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heimdall Battery Sentinel Options",
+        "description": "Update the battery level threshold",
+        "data": {
+          "threshold": "Low Battery threshold (%)"
+        }
+      }
+    }
+  }
+}

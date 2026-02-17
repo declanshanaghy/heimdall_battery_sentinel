@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heimdall Battery Sentinel Setup",
+        "description": "Configure the power threshold for Heimdall's watchful eye",
+        "data": {
+          "threshold": "Alert threshold (%)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heimdall Options",
+        "description": "Adjust the threshold for low battery warnings",
+        "data": {
+          "threshold": "Alert threshold (%)"
+        }
+      }
+    }
+  }
+}

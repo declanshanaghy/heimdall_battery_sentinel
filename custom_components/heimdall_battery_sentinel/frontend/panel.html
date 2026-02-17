@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Heimdall Battery Sentinel</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Roboto, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <heimdall-panel id="panel"></heimdall-panel>
+
+    <script type="module">
+      // Import the panel component
+      import '/api/heimdall_battery_sentinel/panel.js';
+
+      // Function to copy theme from parent to iframe
+      function applyThemeFromParent() {
+        try {
+          // Get computed styles from parent document
+          const parentStyles = window.parent.getComputedStyle(window.parent.document.documentElement);
+
+          // List of CSS custom properties used by Home Assistant themes
+          const themeProperties = [
+            '--primary-color',
+            '--accent-color',
+            '--primary-background-color',
+            '--secondary-background-color',
+            '--card-background-color',
+            '--primary-text-color',
+            '--secondary-text-color',
+            '--disabled-text-color',
+            '--divider-color',
+            '--table-row-background-color',
+            '--table-row-alternative-background-color',
+            '--table-header-background-color',
+            '--table-row-hover-color',
+            '--sidebar-background-color',
+            '--sidebar-text-color',
+            '--sidebar-selected-background-color',
+            '--sidebar-icon-color',
+            '--scrollbar-thumb-color',
+            '--error-color',
+            '--warning-color',
+            '--success-color',
+            '--info-color',
+            '--ha-card-box-shadow',
+            '--mdc-theme-primary',
+            '--mdc-theme-secondary',
+            '--mdc-theme-surface',
+            '--mdc-theme-background',
+            '--mdc-theme-on-primary',
+            '--mdc-theme-on-secondary',
+            '--mdc-theme-on-surface',
+          ];
+
+          // Apply each property to the iframe's document
+          themeProperties.forEach(prop => {
+            const value = parentStyles.getPropertyValue(prop);
+            if (value) {
+              document.documentElement.style.setProperty(prop, value);
+            }
+          });
+
+          console.log('Heimdall: Theme applied from parent');
+        } catch (error) {
+          console.warn('Heimdall: Could not apply theme from parent:', error);
+        }
+      }
+
+      // Function to initialize the panel
+      function initPanel() {
+        console.log('Heimdall: Initializing panel');
+
+        // Apply theme from parent
+        applyThemeFromParent();
+
+        // Get the panel element
+        const panel = document.getElementById('panel');
+
+        // Create a simple hass-like object that uses fetch
+        const hass = {
+          callApi: async (method, path) => {
+            console.log('Heimdall: Calling API:', method, path);
+            const response = await fetch(path, { method });
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return await response.json();
+          }
+        };
+
+        // Set the hass object on the panel
+        panel.hass = hass;
+        console.log('Heimdall: Panel initialized successfully');
+
+        // Watch for theme changes in parent
+        if (window.parent.MutationObserver) {
+          const observer = new MutationObserver(() => {
+            applyThemeFromParent();
+          });
+
+          try {
+            observer.observe(window.parent.document.documentElement, {
+              attributes: true,
+              attributeFilter: ['style', 'class'],
+            });
+            console.log('Heimdall: Watching for theme changes');
+          } catch (error) {
+            console.warn('Heimdall: Could not observe theme changes:', error);
+          }
+        }
+      }
+
+      // Start initialization when DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPanel);
+      } else {
+        initPanel();
+      }
+    </script>
+  </body>
+</html>
