@@ -13,6 +13,8 @@ class HeimdallPanel extends LitElement {
       _lowBatteries: { type: Array },
       _threshold: { type: Number },
       _loading: { type: Boolean },
+      _showAllTable: { type: Boolean },
+      _allTableLoading: { type: Boolean },
     };
   }
 
@@ -22,6 +24,9 @@ class HeimdallPanel extends LitElement {
     this._lowBatteries = [];
     this._threshold = 10;
     this._loading = true;
+    this._showAllTable = false;
+    this._allTableLoading = false;
+    this._wsUnsubscribe = null;
   }
 
   connectedCallback() {
@@ -30,12 +35,45 @@ class HeimdallPanel extends LitElement {
     // Wait for updated() to be called when hass is set
   }
 
+  disconnectedCallback() {
+    if (this._wsUnsubscribe) {
+      this._wsUnsubscribe();
+      this._wsUnsubscribe = null;
+    }
+    super.disconnectedCallback();
+  }
+
   updated(changedProps) {
     console.log("Heimdall: entering 'updated' handler - %s", JSON.stringify(changedProps));
 
     if (changedProps.has("hass") && this.hass) {
       console.log("Heimdall: hass property updated, calling _updateData");
       this._updateData();
+      this._subscribeToUpdates();
+    }
+  }
+
+  async _subscribeToUpdates() {
+    if (!this.hass?.subscribeWS || this._wsUnsubscribe) {
+      return;
+    }
+
+    try {
+      console.log("Heimdall: Subscribing to backend battery updates");
+      this._wsUnsubscribe = await this.hass.subscribeWS(
+        (event) => {
+          console.log("Heimdall: Received battery update event", event);
+          this._lowBatteries = event.low_batteries || [];
+          if (this._showAllTable && event.all_batteries) {
+            this._allBatteries = event.all_batteries || [];
+          }
+          this._threshold = event.threshold || 10;
+          this._loading = false;
+        },
+        { type: "heimdall_battery_sentinel/subscribe_updates" }
+      );
+    } catch (err) {
+      console.warn("Heimdall: Failed to subscribe to backend updates", err);
     }
   }
 
@@ -47,24 +85,21 @@ class HeimdallPanel extends LitElement {
       return;
     }
 
-    console.log("Heimdall: hass object available, calling REST API");
+    console.log("Heimdall: hass object available, calling WebSocket API");
     this._loading = true;
 
     try {
-      console.log("Heimdall: Calling /api/heimdall_battery_sentinel/data");
+      console.log("Heimdall: Calling heimdall_battery_sentinel/get_low_batteries via WebSocket");
 
-      // Call the REST API to get battery data
-      const result = await this.hass.callApi("GET", "/api/heimdall_battery_sentinel/data");
+      // Call the WebSocket API to get low battery data
+      const result = await this.hass.callWS({
+        type: "heimdall_battery_sentinel/get_low_batteries",
+      });
 
-      console.log("Heimdall: REST API response received", result);
-
-      this._allBatteries = result.all_batteries || [];
+      console.log("Heimdall: Low batteries WebSocket response received", result);
       this._lowBatteries = result.low_batteries || [];
       this._threshold = result.threshold || 10;
-
-      console.log(
-        `Heimdall: Loaded ${this._allBatteries.length} total, ${this._lowBatteries.length} low`
-      );
+      console.log(`Heimdall: Loaded ${this._lowBatteries.length} low batteries`);
     } catch (err) {
       console.error("Heimdall: Error fetching data:", err);
       console.error("Heimdall: Error details:", {
@@ -74,6 +109,35 @@ class HeimdallPanel extends LitElement {
     } finally {
       this._loading = false;
       console.log("Heimdall: Loading complete");
+    }
+  }
+
+  async _loadAllBatteries() {
+    if (!this.hass) {
+      return;
+    }
+
+    this._allTableLoading = true;
+    try {
+      console.log("Heimdall: Calling heimdall_battery_sentinel/get_all_batteries via WebSocket");
+      const result = await this.hass.callWS({
+        type: "heimdall_battery_sentinel/get_all_batteries",
+      });
+      console.log("Heimdall: All batteries WebSocket response received", result);
+      this._allBatteries = result.all_batteries || [];
+      this._threshold = result.threshold || this._threshold;
+    } catch (err) {
+      console.error("Heimdall: Error fetching all batteries:", err);
+    } finally {
+      this._allTableLoading = false;
+    }
+  }
+
+  async _toggleAllTable() {
+    const shouldShow = !this._showAllTable;
+    this._showAllTable = shouldShow;
+    if (shouldShow) {
+      await this._loadAllBatteries();
     }
   }
 
@@ -98,49 +162,43 @@ class HeimdallPanel extends LitElement {
     return `${battery.battery_level.toFixed(1)}${battery.unit || "%"}`;
   }
 
-  _renderBatteryTable(batteries, title, emptyMessage) {
+  _renderBatteryTable(batteries, emptyMessage) {
     if (batteries.length === 0) {
       return html`
-        <div class="section">
-          <h2>${title}</h2>
-          <div class="empty-message">${emptyMessage}</div>
-        </div>
+        <div class="empty-message">${emptyMessage}</div>
       `;
     }
 
     return html`
-      <div class="section">
-        <h2>${title} (${batteries.length})</h2>
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Entity ID</th>
-                <th>Friendly Name</th>
-                <th>Battery Level</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${batteries.map(
-                (battery) => html`
-                  <tr class="${this._getRowClass(battery)}">
-                    <td>
-                      <code class="entity-id">${battery.entity_id}</code>
-                    </td>
-                    <td>
-                      <span class="friendly-name">${battery.friendly_name}</span>
-                    </td>
-                    <td>
-                      <span class="battery-value" style="color: ${this._getBatteryColor(battery)}">
-                        ${this._formatBatteryLevel(battery)}
-                      </span>
-                    </td>
-                  </tr>
-                `
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Entity ID</th>
+              <th>Friendly Name</th>
+              <th>Battery Level</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${batteries.map(
+              (battery) => html`
+                <tr class="${this._getRowClass(battery)}">
+                  <td>
+                    <code class="entity-id">${battery.entity_id}</code>
+                  </td>
+                  <td>
+                    <span class="friendly-name">${battery.friendly_name}</span>
+                  </td>
+                  <td>
+                    <span class="battery-value" style="color: ${this._getBatteryColor(battery)}">
+                      ${this._formatBatteryLevel(battery)}
+                    </span>
+                  </td>
+                </tr>
+              `
+            )}
+          </tbody>
+        </table>
       </div>
     `;
   }
@@ -157,45 +215,36 @@ class HeimdallPanel extends LitElement {
       `;
     }
 
-    const totalCount = this._allBatteries.length;
     const lowCount = this._lowBatteries.length;
-
-    if (totalCount === 0) {
-      return html`
-        <div class="container">
-          <div class="empty-state">
-            <ha-icon icon="mdi:battery-unknown" class="empty-icon"></ha-icon>
-            <h2>No Battery Entities Found</h2>
-            <p>The integration hasn't discovered any battery entities yet.</p>
-          </div>
-        </div>
-      `;
-    }
 
     return html`
       <div class="container">
-        <div class="header">
-          <div class="stats">
-            <span class="stat">
-              <strong>${totalCount}</strong> total entities
-            </span>
-            <span class="stat ${lowCount > 0 ? "stat-warning" : ""}">
-              <strong>${lowCount}</strong> low (≤${this._threshold}%)
-            </span>
+        <div class="section">
+          <h2>⚠️ Low Battery Devices</h2>
+          <div class="all-count ${lowCount > 0 ? "count-warning" : ""}">
+            ${this._lowBatteries.length} devices (≤${this._threshold}%)
           </div>
+          ${this._renderBatteryTable(this._lowBatteries, "No low battery devices")}
         </div>
 
-        ${this._renderBatteryTable(
-          this._lowBatteries,
-          "⚠️ Low Battery Devices",
-          "No low battery devices"
-        )}
+        <div class="section-separator" role="separator" aria-hidden="true"></div>
 
-        ${this._renderBatteryTable(
-          this._allBatteries,
-          "📋 All Tracked Battery Entities",
-          "No battery entities found"
-        )}
+        <div class="section">
+          <div class="all-section-header">
+            <h2>📋 All Tracked Battery Entities</h2>
+            <button class="toggle-button" @click=${this._toggleAllTable}>
+              ${this._showAllTable ? "Hide Table" : "Show Table"}
+            </button>
+          </div>
+          ${this._showAllTable
+            ? html`
+                <div class="all-count">${this._allBatteries.length} devices</div>
+                ${this._allTableLoading
+                  ? html`<div class="empty-message">Loading all tracked battery entities...</div>`
+                  : this._renderBatteryTable(this._allBatteries, "No battery entities found")}
+              `
+            : ""}
+        </div>
       </div>
     `;
   }
@@ -214,40 +263,20 @@ class HeimdallPanel extends LitElement {
         margin: 0 auto;
       }
 
-      .header {
-        margin-bottom: 32px;
-      }
-
-      .header h1 {
-        margin: 0 0 12px 0;
-        font-size: 28px;
-        font-weight: 400;
-        color: var(--primary-text-color);
-      }
-
-      .stats {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-      }
-
-      .stat {
-        color: var(--secondary-text-color);
-        font-size: 14px;
-      }
-
-      .stat strong {
-        color: var(--primary-text-color);
-        font-size: 20px;
-        margin-right: 4px;
-      }
-
-      .stat-warning strong {
-        color: var(--warning-color, #ff9800);
-      }
-
       .section {
         margin-bottom: 32px;
+      }
+
+      .section-separator {
+        height: 1px;
+        margin: 8px 0 28px 0;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          var(--divider-color) 15%,
+          var(--divider-color) 85%,
+          transparent 100%
+        );
       }
 
       .section h2 {
@@ -264,6 +293,42 @@ class HeimdallPanel extends LitElement {
         background-color: var(--card-background-color);
         border-radius: 8px;
         border: 2px dashed var(--divider-color);
+      }
+
+      .all-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .all-section-header h2 {
+        margin: 0;
+      }
+
+      .toggle-button {
+        border: 1px solid var(--divider-color);
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .toggle-button:hover {
+        background: var(--table-row-hover-color, rgba(0, 0, 0, 0.04));
+      }
+
+      .all-count {
+        margin: 0 0 12px 0;
+        color: var(--secondary-text-color);
+        font-size: 14px;
+      }
+
+      .count-warning {
+        color: var(--warning-color, #ff9800);
       }
 
       .loading {

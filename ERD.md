@@ -1,69 +1,89 @@
-## Technical Architecture
+## Heimdall Architecture
 
-### Integration Structure
+This integration is structured into isolated modules with a thin orchestrator:
 
+- `__init__.py`: lifecycle orchestration (`async_setup_entry`, unload, options update)
+- `runtime.py`: shared in-memory state and payload helpers
+- `event_handlers.py`: discovery + state/event listeners + battery tracking updates
+- `websocket_handlers.py`: websocket command registration and push subscriptions
+- `views.py`: panel static views and REST data endpoint
+- `frontend/panel.js`: LitElement panel UI
+- `frontend/panel.html`: iframe bootstrap and Home Assistant websocket bridge
+
+### Runtime Data Model
+
+Per config entry (`hass.data[DOMAIN][entry_id]`):
+
+- `all_batteries`: tracked battery entities keyed by `entity_id`
+- `low_batteries`: subset of low batteries keyed by `entity_id`
+- `unsub`: listener cleanup callbacks
+- `ws_subscribers`: active websocket subscribers for push updates
+
+## Module Interaction Diagram
+
+```mermaid
+flowchart LR
+  subgraph HA[Home Assistant Core]
+    SM[State Machine]
+    BUS[Event Bus]
+    REG[Entity Registry Events]
+    CFG[Config Entries]
+  end
+
+  subgraph BE[Integration Backend]
+    INIT["__init__.py\n(orchestrator)"]
+    RT["runtime.py\n(state/payload helpers)"]
+    EH["event_handlers.py\n(discovery + listeners)"]
+    WS["websocket_handlers.py\n(commands + subscriptions)"]
+    VW["views.py\n(panel/static/REST)"]
+  end
+
+  subgraph FE[Panel Frontend]
+    HTML["frontend/panel.html\n(hass bridge)"]
+    JS["frontend/panel.js\n(UI + WS calls)"]
+  end
+
+  CFG --> INIT
+  INIT --> RT
+  INIT --> EH
+  INIT --> WS
+  INIT --> VW
+
+  SM --> BUS
+  BUS --> EH
+  REG --> EH
+  EH --> RT
+  EH --> WS
+
+  WS --> RT
+  VW --> RT
+
+  HTML --> JS
+  JS -->|"WS: get_low_batteries"| WS
+  JS -->|"WS: get_all_batteries"| WS
+  JS -->|"WS: subscribe_updates"| WS
+  JS -->|"GET /api/heimdall_battery_sentinel/data"| VW
+
+  WS -->|push update events| JS
 ```
-custom_components/heimdall_battery_sentinel/
-├── __init__.py          # Integration setup, event listeners
-├── manifest.json        # Integration metadata
-├── config_flow.py       # UI configuration flow + options flow
-├── const.py             # Constants (domain, defaults, config keys)
-├── strings.json         # UI strings for config flow
-├── translations/
-│   └── en.json          # English translations
-└── frontend/
-    └── panel.js         # Custom panel (LitElement web component)
-```
 
-### manifest.json
+## Request/Update Flows
 
-```json
-{
-  "domain": "heimdall_battery_sentinel",
-  "name": "Heimdall Battery Sentinel",
-  "codeowners": [],
-  "config_flow": true,
-  "documentation": "",
-  "iot_class": "local_push",
-  "version": "1.0.0",
-  "requirements": [],
-  "dependencies": ["frontend"]
-}
-```
+### Initial panel load
 
-Key choices:
-- `iot_class: local_push` — the integration reacts to state change events rather than polling.
-- `dependencies: ["frontend"]` — required for registering the custom panel.
-- No external `requirements` — the integration uses only Home Assistant's built-in APIs.
+1. `panel.js` requests low batteries via websocket command `heimdall_battery_sentinel/get_low_batteries`.
+2. Backend reads payload from `runtime.py` helpers and returns `low_batteries + threshold`.
+3. "All Tracked Battery Entities" remains collapsed until user clicks **Show Table**.
 
-### Data Flow
+### On-demand full table load
 
-```
-HA State Machine
-       │
-       ▼
-  state_changed event
-       │
-       ▼
-  Heimdall Battery Sentinel
-  (event listener)
-       │
-       ├── level ≤ threshold → Store in panel data
-       │
-       └── level > threshold → Remove from panel data
+1. User clicks **Show Table**.
+2. `panel.js` requests `heimdall_battery_sentinel/get_all_batteries`.
+3. Backend returns `all_batteries + threshold`.
 
-       Panel reads data store on load / via WebSocket
-```
+### Live updates
 
-### Custom Panel Registration
-
-The integration registers its panel in `__init__.py` during setup using `hass.components.frontend.async_register_built_in_panel()` or the `panel_custom` service. The panel is a LitElement web component that:
-
-1. Connects to Home Assistant via the `hass` object passed as a property.
-2. Reads entity states and history data to render the device table.
-3. Updates reactively when `hass` property changes.
-
-### Configuration Storage
-
-- **Config entry:** Stores the threshold value via Home Assistant's config entries system.
-- **Runtime state:** Maintains an in-memory dictionary of currently-flagged devices, keyed by entity ID. This is rebuilt from current states on Home Assistant startup.
+1. `event_handlers.py` listens to `state_changed` and `entity_registry_updated`.
+2. On add/remove/update of battery entities, runtime structures are updated.
+3. `websocket_handlers.py` broadcasts update payloads to subscribers.
+4. Frontend updates low-battery table immediately; full table updates live when visible.

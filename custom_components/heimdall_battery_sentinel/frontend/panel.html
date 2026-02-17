@@ -82,15 +82,47 @@
         // Get the panel element
         const panel = document.getElementById('panel');
 
-        // Create a simple hass-like object that uses fetch
-        const hass = {
-          callApi: async (method, path) => {
-            console.log('Heimdall: Calling API:', method, path);
-            const response = await fetch(path, { method });
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
+        function getParentHass() {
+          try {
+            if (window.parent?.hass) {
+              return window.parent.hass;
             }
-            return await response.json();
+
+            const haEl = window.parent?.document?.querySelector('home-assistant');
+            if (haEl?.hass) {
+              return haEl.hass;
+            }
+          } catch (error) {
+            console.warn('Heimdall: Could not access parent hass object:', error);
+          }
+
+          return null;
+        }
+
+        // Create a simple hass-like object for the panel.
+        // WebSocket commands are proxied through HA's existing parent connection.
+        const hass = {
+          callWS: async (msg) => {
+            const parentHass = getParentHass();
+
+            if (parentHass?.callWS) {
+              return parentHass.callWS(msg);
+            }
+
+            if (parentHass?.connection?.sendMessagePromise) {
+              return parentHass.connection.sendMessagePromise(msg);
+            }
+
+            throw new Error('Home Assistant WebSocket connection is not available');
+          },
+          subscribeWS: async (callback, msg) => {
+            const parentHass = getParentHass();
+
+            if (parentHass?.connection?.subscribeMessage) {
+              return parentHass.connection.subscribeMessage(callback, msg);
+            }
+
+            throw new Error('Home Assistant WebSocket subscription is not available');
           }
         };
 

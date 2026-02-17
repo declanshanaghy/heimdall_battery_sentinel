@@ -11,7 +11,7 @@ Heimdall stands eternal watch over your Home Assistant batteries, ever vigilant 
 - **📊 The Watch List** - Beautiful panel displaying all tracked devices and their power levels
 - **🎯 Event-Driven** - No polling, no waste - Heimdall reacts instantly to state changes
 - **🎨 Theme Aware** - Adapts to your Home Assistant theme (light, dark, or custom)
-- **⚙️ Configurable Threshold** - Set your own power level for warnings (default: 10%)
+- **⚙️ Configurable Threshold** - Set your own power level for warnings (default: 20%)
 
 ## 🏰 Installation
 
@@ -53,14 +53,14 @@ After deployment, Heimdall can be configured through the Home Assistant UI:
 1. Go to **Settings → Devices & Services**
 2. Click **+ Add Integration**
 3. Search for "Heimdall Battery Sentinel"
-4. Set your desired alert threshold (default: 10%)
+4. Set your desired alert threshold (default: 20%)
 
 ## 📜 The Sentinel's Watch
 
 Once configured, find Heimdall's panel in your Home Assistant sidebar. The panel displays:
 
 - **⚠️ Low Battery Devices** - Batteries below your threshold
-- **📋 All Tracked Entities** - Complete view of all monitored batteries
+- **📋 All Tracked Battery Entities** - Complete view of monitored batteries (collapsed by default; click **Show Table** to load and display)
 
 Each device shows:
 - Entity ID
@@ -73,8 +73,12 @@ Heimdall is built with the wisdom of the ages:
 
 ```
 custom_components/heimdall_battery_sentinel/
-├── __init__.py              # Core integration logic
+├── __init__.py              # Integration lifecycle orchestration
 ├── const.py                 # Configuration constants
+├── runtime.py               # Shared runtime state + payload helpers
+├── event_handlers.py        # Battery discovery + event/state handling
+├── websocket_handlers.py    # WebSocket command handlers + subscriptions
+├── views.py                 # Static file + REST/panel view registration
 ├── config_flow.py           # Setup and options flow
 ├── manifest.json            # Integration metadata
 ├── strings.json             # UI strings
@@ -101,8 +105,10 @@ Unlike lesser sentinels who must constantly check for changes, Heimdall listens 
 ### Theme Integration
 Heimdall respects your realm's appearance. Whether you prefer the brightness of Álfheimr or the darkness of Svartálfaheimr, the panel adapts seamlessly to your chosen theme through CSS custom properties inherited from your Home Assistant profile.
 
-### REST API
-Heimdall exposes a simple REST endpoint for retrieving battery data:
+### APIs
+Heimdall exposes a REST endpoint for battery data and WebSocket commands for panel reads/updates.
+
+REST endpoint:
 ```
 GET /api/heimdall_battery_sentinel/data
 ```
@@ -112,9 +118,14 @@ Returns:
 {
   "all_batteries": [...],
   "low_batteries": [...],
-  "threshold": 10
+  "threshold": 20
 }
 ```
+
+WebSocket commands:
+- `heimdall_battery_sentinel/get_low_batteries`
+- `heimdall_battery_sentinel/get_all_batteries`
+- `heimdall_battery_sentinel/subscribe_updates`
 
 ## 🔧 Development
 
@@ -124,7 +135,8 @@ For rapid development, use the fast deployment mode:
 ./scripts/deploy.sh
 ```
 
-This uploads code changes instantly without restarting Home Assistant. Changes take effect on the next HA restart.
+This uploads code changes without restarting Home Assistant.
+Frontend changes apply after a panel refresh; backend changes apply after Home Assistant restart.
 
 ### Full Deployment
 When you need to test the complete integration lifecycle:
@@ -133,6 +145,46 @@ When you need to test the complete integration lifecycle:
 ```
 
 This unloads the old integration, restarts HA, waits for it to come back online, and sets up the integration fresh.
+
+### Remove Stale Entity History
+If you need to remove a stale entity from Home Assistant using HA APIs:
+
+```bash
+./scripts/remove_entity_from_db.py sensor.spa_cover_moving_battery
+```
+
+By default it targets `http://homeassistant:8123`.  
+Use `--ha-url` if your HA URL is different:
+
+```bash
+./scripts/remove_entity_from_db.py --ha-url http://192.168.1.50:8123 sensor.spa_cover_moving_battery
+```
+
+Token loading matches deploy.sh: it uses `HA_TOKEN` first, then `~/.config/ha_token`.
+The script requires a confirmation prompt (`Y`/`y`) before it deletes anything.
+
+### Clean Stale MQTT Retained Topics
+To inspect and clean stale retained MQTT topics:
+
+```bash
+./scripts/cleanup_mqtt_retained.py
+```
+
+Defaults:
+- Host: `mqtt`
+- Port: `1883`
+- User: `mqtt`
+- Scope: `homeassistant/` prefix
+
+Password loading:
+1. `HA_MQTT_PASSWD`
+2. `~/.config/ha_mqtt_passwd`
+
+Delete mode prompts per topic (`y` to delete, anything else to skip):
+
+```bash
+./scripts/cleanup_mqtt_retained.py --execute
+```
 
 ## 🎯 Customization
 
@@ -144,7 +196,7 @@ Adjust the warning threshold at any time:
 4. Adjust the threshold percentage
 
 ### Panel Icon
-The shield icon (`mdi:shield-account`) represents Heimdall's protective watch. To change it, modify `PANEL_ICON` in `const.py`.
+The panel icon is currently `mdi:battery-20`. To change it, modify `PANEL_ICON` in `const.py`.
 
 ## 🌈 Color Coding
 
